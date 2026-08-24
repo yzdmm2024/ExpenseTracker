@@ -247,7 +247,7 @@
     CGFloat spacing = 8;
     CGFloat startX = 16;
     CGFloat x = startX;
-    y = 36;
+    CGFloat y = 36;
     
     for (int i = 0; i < self.categories.count; i++) {
         CategoryModel *cat = self.categories[i];

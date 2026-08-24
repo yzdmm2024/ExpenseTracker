@@ -196,7 +196,7 @@
     
     [NSLayoutConstraint activateConstraints:@[
         [icon.centerXAnchor constraintEqualToAnchor:view.centerXAnchor],
-        [icon.centerYAnchor constraintEqualToAnchor:view.centerYAnchor offset:-8],
+        [icon.centerYAnchor constraintEqualToAnchor:view.centerYAnchor constant:-8],
         [icon.widthAnchor constraintEqualToConstant:28],
         [icon.heightAnchor constraintEqualToConstant:28],
         
@@ -292,7 +292,7 @@
 - (NSString *)monthSubtitle {
     NSDateFormatter *df = [[NSDateFormatter alloc] init];
     df.dateFormat = @"M月";
-    return [NSString stringWithFormat:@"%@共%d天", [df stringFromDate:[NSDate date]], [self daysInMonth]];
+    return [NSString stringWithFormat:@"%@共%ld天", [df stringFromDate:[NSDate date]], (long)[self daysInMonth]];
 }
 
 - (NSInteger)daysInMonth {

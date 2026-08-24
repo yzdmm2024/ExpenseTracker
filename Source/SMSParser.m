@@ -137,7 +137,6 @@
         @"95508": @"广发银行", @"95501": @"平安银行", @"95595": @"光大银行",
         @"95568": @"民生银行", @"95558": @"中信银行", @"95582": @"北京银行",
         @"95526": @"北京农商行", @"95574": @"宁波银行", @"95597": @"南京银行",
-        @"95561": @"兴业银行", @"95528": @"浦发银行", @"95558": @"中信银行",
     };
     
     if (banks[sender]) return banks[sender];
@@ -247,8 +246,8 @@
 
 - (NSString *)md5:(NSString *)str {
     const char *cStr = [str UTF8String];
-    unsigned char digest[16];
-    CC_MD5(cStr, (CC_LONG)strlen(cStr), digest);
+    unsigned char digest[32];
+    CC_SHA256(cStr, (CC_LONG)strlen(cStr), digest);
     return [NSString stringWithFormat:@"%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x",
             digest[0], digest[1], digest[2], digest[3], digest[4], digest[5], digest[6], digest[7],
             digest[8], digest[9], digest[10], digest[11], digest[12], digest[13], digest[14], digest[15]];

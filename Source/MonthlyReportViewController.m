@@ -340,7 +340,7 @@
         NSDate *d = [cal dateByAddingComponents:c toDate:[NSDate date] options:0];
         NSString *ym = [ymf stringFromDate:d];
         double total = [[DatabaseManager shared] totalExpenseForMonth:ym];
-        [trendData addObject:@{@"label": [NSString stringWithFormat:@"%d月", [c month]], @"value": @(total)}];
+        [trendData addObject:@{@"label": [NSString stringWithFormat:@"%ld月", (long)[c month]], @"value": @(total)}];
     }
     _trendChart.data = trendData;
     [_trendChart reloadData];

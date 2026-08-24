@@ -2,7 +2,7 @@ name: Build ExpenseTracker IPA
 
 on:
   push:
-    branches: [main]
+    branches: [master]
     paths:
       - 'Source/**'
       - 'Resources/**'

@@ -157,8 +157,9 @@
         @{@"title": @"设置", @"icon": @"gearshape.fill", @"color": [UIColor systemGrayColor]},
     ];
     
-    for (NSDictionary *item in items) {
-        UIView *actionView = [self createActionView:item];
+    for (int i = 0; i < items.count; i++) {
+        UIView *actionView = [self createActionView:items[i]];
+        actionView.tag = i;
         [_quickActionsStack addArrangedSubview:actionView];
     }
     
@@ -208,7 +209,6 @@
     UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(actionTapped:)];
     view.userInteractionEnabled = YES;
     [view addGestureRecognizer:tap];
-    view.tag = [@[@"add", @"report", @"list", @"settings"] indexOfObject:item[@"title"] ? @"" : @""];
     
     return view;
 }

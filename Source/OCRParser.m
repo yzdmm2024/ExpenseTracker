@@ -213,7 +213,7 @@
 
 - (BOOL)isIncome:(NSString *)text {
     // Check for income indicators
-    NSArray *incomeWords = @[@"收入", @"收款", @"转入", "+", @"到账", @"退款", @"退回"];
+    NSArray *incomeWords = @[@"收入", @"收款", @"转入", @"+", @"到账", @"退款", @"退回"];
     for (NSString *w in incomeWords) {
         if ([text containsString:w]) return YES;
     }

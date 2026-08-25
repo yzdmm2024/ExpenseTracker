@@ -17,7 +17,7 @@ rm -rf "$BUILD_DIR"
 
 # Remove CRLF line endings to avoid macOS clang issues
 echo "Normalizing line endings..."
-find Source -name "*.m" -o -name "*.h" | xargs sed -i '' 's/\r$//' 2>/dev/null || true
+find Source \( -name "*.m" -o -name "*.h" \) -print0 | xargs -0 perl -pi -e 's/\r//g;' 2>/dev/null || true
 mkdir -p "$BUILD_DIR/obj"
 mkdir -p "$BUILD_DIR/Payload/$PROJECT.app"
 

@@ -13,7 +13,7 @@
     return instance;
 }
 
-- (void)recognizeFromImage:(UIImage *)image completion:(void(^)(NSArray<Transaction *> *transactions, NSError *error))completion {
+- (void)recognizeFromImage:(UIImage *)image completion:(void(^)(NSArray<TransactionModel *> *transactions, NSError *error))completion {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         CGImageRef cgImage = image.CGImage;
         if (!cgImage) {
@@ -233,15 +233,6 @@
     if ([combined containsString:@"话费"] || [combined containsString:@"流量"] || [combined containsString:@"通讯"]) return @"通讯";
     if ([combined containsString:@"生活"] || [combined containsString:@"水电"] || [combined containsString:@"物业"]) return @"生活";
     return @"其他";
-}
-
-- (NSString *)generateId:(Transaction *)t {
-    NSString *raw = [NSString stringWithFormat:@"ocr_%@%@%@%f", t.merchant, t.category, [t.date description], t.amount];
-    const char *cStr = [raw UTF8String];
-    unsigned char digest[32];
-    CC_SHA256(cStr, (CC_LONG)strlen(cStr), digest);
-    return [NSString stringWithFormat:@"ocr_%02x%02x%02x%02x%02x%02x%02x%02x",
-            digest[0], digest[1], digest[2], digest[3], digest[4], digest[5], digest[6], digest[7]];
 }
 
 - (NSString *)generateId:(TransactionModel *)t {

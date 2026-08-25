@@ -10,6 +10,7 @@
 @interface SettingsViewController () <UITableViewDelegate, UITableViewDataSource, UIDocumentPickerDelegate, UIImagePickerControllerDelegate, UINavigationControllerDelegate>
 @property (nonatomic, strong) UITableView *tableView;
 @property (nonatomic, strong) NSArray *sections;
+@property (nonatomic, strong) NSString *importType;
 @end
 
 @implementation SettingsViewController
@@ -299,16 +300,16 @@
 #pragma mark - CSV Import
 
 - (void)importAlipayCSV {
+    self.importType = @"alipay";
     UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeCommaSeparatedText] asCopy:YES];
     picker.delegate = self;
-    picker.userInfo = @{@"type": @"alipay"};
     [self presentViewController:picker animated:YES completion:nil];
 }
 
 - (void)importWeChatCSV {
+    self.importType = @"wechat";
     UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeCommaSeparatedText] asCopy:YES];
     picker.delegate = self;
-    picker.userInfo = @{@"type": @"wechat"};
     [self presentViewController:picker animated:YES completion:nil];
 }
 
@@ -316,8 +317,8 @@
     NSURL *url = urls.firstObject;
     if (!url) return;
     
-    NSString *type = controller.userInfo[@"type"];
-    if (!type) type = @"alipay";
+    NSString *type = self.importType ?: @"alipay";
+    self.importType = nil;
     
     UIAlertController *loading = [UIAlertController alertControllerWithTitle:@"导入中" message:@"正在解析..." preferredStyle:UIAlertControllerStyleAlert];
     [self presentViewController:loading animated:YES completion:nil];
@@ -373,7 +374,7 @@
     UIAlertController *loading = [UIAlertController alertControllerWithTitle:@"识别中" message:@"正在分析截图..." preferredStyle:UIAlertControllerStyleAlert];
     [self presentViewController:loading animated:YES completion:nil];
     
-    [[OCRParser shared] recognizeFromImage:image completion:^(NSArray<Transaction *> *transactions, NSError *error) {
+    [[OCRParser shared] recognizeFromImage:image completion:^(NSArray<TransactionModel *> *transactions, NSError *error) {
         [loading dismissViewControllerAnimated:YES completion:^{
             if (error || transactions.count == 0) {
                 UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"识别失败"

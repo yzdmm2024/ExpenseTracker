@@ -16,7 +16,7 @@
 // 支付宝 CSV 格式：
 // 前 25 行是说明，第 25 行是表头，第 26 行开始是数据
 // 表头: 交易时间, 交易分类, 交易对方, 对方账号, 商品说明, 收/支, 金额, 收/付款方式, 交易状态, 交易订单号, 商家订单号, 备注
-- (void)parseAlipayCSV:(NSString *)filePath completion:(void(^)(NSArray<Transaction *> *transactions, NSError *error))completion {
+- (void)parseAlipayCSV:(NSString *)filePath completion:(void(^)(NSArray<TransactionModel *> *transactions, NSError *error))completion {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         NSError *error = nil;
         NSString *content = [NSString stringWithContentsOfFile:filePath encoding:NSUTF8StringEncoding error:&error];
@@ -111,7 +111,7 @@
 // 微信 CSV 格式：
 // 前 16 行是说明，第 17 行是表头，第 18 行开始是数据
 // 表头: 交易时间, 交易类型, 交易对方, 商品, 收/支, 金额, 支付方式, 当前状态, 交易单号, 商户单号, 备注
-- (void)parseWeChatCSV:(NSString *)filePath completion:(void(^)(NSArray<Transaction *> *transactions, NSError *error))completion {
+- (void)parseWeChatCSV:(NSString *)filePath completion:(void(^)(NSArray<TransactionModel *> *transactions, NSError *error))completion {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         NSError *error = nil;
         NSString *content = [NSString stringWithContentsOfFile:filePath encoding:NSUTF8StringEncoding error:&error];

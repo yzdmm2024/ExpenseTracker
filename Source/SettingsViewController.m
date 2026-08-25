@@ -2,9 +2,12 @@
 #import "DatabaseManager.h"
 #import "SMSParser.h"
 #import "NotificationParser.h"
+#import "CSVImporter.h"
+#import "OCRParser.h"
 #import "GlassmorphismView.h"
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
-@interface SettingsViewController () <UITableViewDelegate, UITableViewDataSource>
+@interface SettingsViewController () <UITableViewDelegate, UITableViewDataSource, UIDocumentPickerDelegate, UIImagePickerControllerDelegate, UINavigationControllerDelegate>
 @property (nonatomic, strong) UITableView *tableView;
 @property (nonatomic, strong) NSArray *sections;
 @end
@@ -22,12 +25,17 @@
                   @{@"title": @"立即同步", @"subtitle": @"手动触发数据同步", @"type": @"action", @"action": @"sync"},
                   @{@"title": @"查看数据统计", @"subtitle": @"数据库概况", @"type": @"info", @"action": @"stats"},
               ]},
+        @{@"title": @"导入数据", @"items": @[
+                  @{@"title": @"导入支付宝账单", @"subtitle": @"从支付宝导出的 CSV 文件", @"type": @"action", @"action": @"import_alipay"},
+                  @{@"title": @"导入微信账单", @"subtitle": @"从微信导出的 CSV 文件", @"type": @"action", @"action": @"import_wechat"},
+                  @{@"title": @"从相册识别截图", @"subtitle": @"识别支付截图中的交易信息", @"type": @"action", @"action": @"ocr"},
+              ]},
         @{@"title": @"数据管理", @"items": @[
                   @{@"title": @"导出为 CSV", @"subtitle": @"保存到文件", @"type": @"action", @"action": @"export"},
                   @{@"title": @"清除所有数据", @"subtitle": @"删除全部交易记录", @"type": @"danger", @"action": @"clear"},
               ]},
         @{@"title": @"关于", @"items": @[
-                  @{@"title": @"版本", @"subtitle": @"1.0.0", @"type": @"info"},
+                  @{@"title": @"版本", @"subtitle": @"1.1.0", @"type": @"info"},
                   @{@"title": @"数据源存储路径", @"subtitle": [NSString stringWithFormat:@"%@/Documents/expense_tracker.db", NSHomeDirectory()], @"type": @"info"},
               ]},
     ];
@@ -149,6 +157,12 @@
         [self syncData];
     } else if ([action isEqualToString:@"stats"]) {
         [self showStats];
+    } else if ([action isEqualToString:@"import_alipay"]) {
+        [self importAlipayCSV];
+    } else if ([action isEqualToString:@"import_wechat"]) {
+        [self importWeChatCSV];
+    } else if ([action isEqualToString:@"ocr"]) {
+        [self importFromPhoto];
     } else if ([action isEqualToString:@"export"]) {
         [self exportCSV];
     } else if ([action isEqualToString:@"clear"]) {
@@ -280,6 +294,112 @@
         [self presentViewController:done animated:YES completion:nil];
     }]];
     [self presentViewController:alert animated:YES completion:nil];
+}
+
+#pragma mark - CSV Import
+
+- (void)importAlipayCSV {
+    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeCommaSeparatedText] asCopy:YES];
+    picker.delegate = self;
+    picker.userInfo = @{@"type": @"alipay"};
+    [self presentViewController:picker animated:YES completion:nil];
+}
+
+- (void)importWeChatCSV {
+    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeCommaSeparatedText] asCopy:YES];
+    picker.delegate = self;
+    picker.userInfo = @{@"type": @"wechat"};
+    [self presentViewController:picker animated:YES completion:nil];
+}
+
+- (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+    NSURL *url = urls.firstObject;
+    if (!url) return;
+    
+    NSString *type = controller.userInfo[@"type"];
+    if (!type) type = @"alipay";
+    
+    UIAlertController *loading = [UIAlertController alertControllerWithTitle:@"导入中" message:@"正在解析..." preferredStyle:UIAlertControllerStyleAlert];
+    [self presentViewController:loading animated:YES completion:nil];
+    
+    NSString *filePath = [url path];
+    
+    void (^importBlock)(NSArray *txns, NSError *error) = ^(NSArray *txns, NSError *error) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [loading dismissViewControllerAnimated:YES completion:^{
+                if (error) {
+                    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"导入失败"
+                                               message:error.localizedDescription
+                                               preferredStyle:UIAlertControllerStyleAlert];
+                    [alert addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
+                    [self presentViewController:alert animated:YES completion:nil];
+                    return;
+                }
+                
+                [[DatabaseManager shared] insertTransactions:txns];
+                
+                NSString *msg = [NSString stringWithFormat:@"成功导入 %ld 条交易记录", (long)txns.count];
+                UIAlertController *done = [UIAlertController alertControllerWithTitle:@"导入完成"
+                                           message:msg
+                                           preferredStyle:UIAlertControllerStyleAlert];
+                [done addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
+                [self presentViewController:done animated:YES completion:nil];
+            }];
+        });
+    };
+    
+    if ([type isEqualToString:@"wechat"]) {
+        [[CSVImporter shared] parseWeChatCSV:filePath completion:importBlock];
+    } else {
+        [[CSVImporter shared] parseAlipayCSV:filePath completion:importBlock];
+    }
+}
+
+#pragma mark - OCR Screenshot Import
+
+- (void)importFromPhoto {
+    UIImagePickerController *picker = [[UIImagePickerController alloc] init];
+    picker.sourceType = UIImagePickerControllerSourceTypePhotoLibrary;
+    picker.delegate = self;
+    [self presentViewController:picker animated:YES completion:nil];
+}
+
+- (void)imagePickerController:(UIImagePickerController *)picker didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> *)info {
+    [picker dismissViewControllerAnimated:YES completion:nil];
+    
+    UIImage *image = info[UIImagePickerControllerOriginalImage];
+    if (!image) return;
+    
+    UIAlertController *loading = [UIAlertController alertControllerWithTitle:@"识别中" message:@"正在分析截图..." preferredStyle:UIAlertControllerStyleAlert];
+    [self presentViewController:loading animated:YES completion:nil];
+    
+    [[OCRParser shared] recognizeFromImage:image completion:^(NSArray<Transaction *> *transactions, NSError *error) {
+        [loading dismissViewControllerAnimated:YES completion:^{
+            if (error || transactions.count == 0) {
+                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"识别失败"
+                                           message:error ? error.localizedDescription : @"未识别到交易信息，请确保截图包含金额和支付信息"
+                                           preferredStyle:UIAlertControllerStyleAlert];
+                [alert addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
+                [self presentViewController:alert animated:YES completion:nil];
+                return;
+            }
+            
+            [[DatabaseManager shared] insertTransactions:transactions];
+            
+            TransactionModel *t = transactions.firstObject;
+            NSString *detail = [NSString stringWithFormat:@"金额: ¥%.2f\n商户: %@\n平台: %@",
+                                fabs(t.amount), t.merchant, [t platformDisplayName]];
+            UIAlertController *done = [UIAlertController alertControllerWithTitle:@"识别成功"
+                                       message:detail
+                                       preferredStyle:UIAlertControllerStyleAlert];
+            [done addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
+            [self presentViewController:done animated:YES completion:nil];
+        }];
+    }];
+}
+
+- (void)imagePickerControllerDidCancel:(UIImagePickerController *)picker {
+    [picker dismissViewControllerAnimated:YES completion:nil];
 }
 
 @end

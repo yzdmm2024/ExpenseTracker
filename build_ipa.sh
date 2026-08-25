@@ -23,7 +23,7 @@ CFLAGS="-isysroot $SDK_PATH -miphoneos-version-min=$MIN_IOS -arch $ARCH"
 CFLAGS="$CFLAGS -fobjc-arc -I Source"
 LDFLAGS="-framework UIKit -framework Foundation -framework CoreGraphics"
 LDFLAGS="$LDFLAGS -framework QuartzCore -framework UserNotifications"
-LDFLAGS="$LDFLAGS -framework CoreText"
+LDFLAGS="$LDFLAGS -framework CoreText -framework Vision"
 LDFLAGS="$LDFLAGS -lsqlite3"
 
 echo "Compiling Objective-C files..."

@@ -17,7 +17,7 @@ rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR/obj"
 mkdir -p "$BUILD_DIR/Payload/$PROJECT.app"
 
-# Compile all .m files
+# Compile each .m file individually
 OBJC_FILES=$(find Source -name "*.m" | sort)
 CFLAGS="-isysroot $SDK_PATH -miphoneos-version-min=$MIN_IOS -arch $ARCH"
 CFLAGS="$CFLAGS -fobjc-arc -I Source"
@@ -27,8 +27,11 @@ LDFLAGS="$LDFLAGS -framework CoreText -framework Vision"
 LDFLAGS="$LDFLAGS -lsqlite3"
 
 echo "Compiling Objective-C files..."
-clang $CFLAGS -c $OBJC_FILES
-mv *.o "$BUILD_DIR/obj/"
+for f in $OBJC_FILES; do
+    basename=$(basename "$f" .m)
+    echo "  $f -> $BUILD_DIR/obj/${basename}.o"
+    clang $CFLAGS -c "$f" -o "$BUILD_DIR/obj/${basename}.o"
+done
 
 echo "Linking..."
 clang $CFLAGS "$BUILD_DIR/obj/"*.o -o "$BUILD_DIR/Payload/$PROJECT.app/$PROJECT" $LDFLAGS

@@ -52,8 +52,8 @@
 }
 
 - (NSString *)base64Image:(UIImage *)image {
-    UIImage *resized = [self resizeImage:image maxDimension:800];
-    NSData *jpegData = UIImageJPEGRepresentation(resized, 0.8);
+    UIImage *resized = [self resizeImage:image maxDimension:400];
+    NSData *jpegData = UIImageJPEGRepresentation(resized, 0.7);
     if (!jpegData) return nil;
     return [jpegData base64EncodedStringWithOptions:0];
 }
@@ -112,7 +112,7 @@
         NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
         request.HTTPMethod = @"POST";
         [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-        request.timeoutInterval = 30;
+        request.timeoutInterval = 15;
         
         // Set auth header (Gemini uses URL param, others use Bearer)
         if (provider != LLMProviderGemini) {
@@ -227,8 +227,8 @@
         
         [task resume];
         
-        // Wait with 30-second timeout
-        dispatch_time_t timeout = dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC);
+        // Wait with 15-second timeout
+        dispatch_time_t timeout = dispatch_time(DISPATCH_TIME_NOW, 15 * NSEC_PER_SEC);
         if (dispatch_semaphore_wait(semaphore, timeout) != 0) {
             [task cancel];
             dispatch_async(dispatch_get_main_queue(), ^{

@@ -460,31 +460,68 @@
 }
 
 - (void)imagePickerController:(UIImagePickerController *)picker didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> *)info {
-    [picker dismissViewControllerAnimated:YES completion:nil];
-    
-    UIAlertController *loading = [UIAlertController alertControllerWithTitle:@"识别中" message:@"正在分析截图..." preferredStyle:UIAlertControllerStyleAlert];
-    [self presentViewController:loading animated:YES completion:nil];
-    
-    // Request a smaller image directly from photo library to avoid full-resolution decode
-    PHAsset *asset = info[UIImagePickerControllerPHAsset];
-    if (asset) {
-        PHImageRequestOptions *options = [[PHImageRequestOptions alloc] init];
-        options.deliveryMode = PHImageRequestOptionsDeliveryModeHighQualityFormat;
-        options.synchronous = YES;
-        options.resizeMode = PHImageRequestOptionsResizeModeExact;
-        
-        [[PHImageManager defaultManager] requestImageForAsset:asset
-                                                   targetSize:CGSizeMake(600, 600)
-                                                  contentMode:PHImageContentModeAspectFit
-                                                      options:options
-                                                resultHandler:^(UIImage *result, NSDictionary *rinfo) {
-            UIImage *image = result ?: info[UIImagePickerControllerOriginalImage];
-            [self processOCRImage:image loading:loading];
+    [picker dismissViewControllerAnimated:YES completion:^{
+        __block BOOL cancelled = NO;
+        UIAlertController *loading = [UIAlertController alertControllerWithTitle:@"识别中" message:@"正在解析图片..." preferredStyle:UIAlertControllerStyleAlert];
+        [loading addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action) {
+            cancelled = YES;
+        }]];
+        [self presentViewController:loading animated:YES completion:^{
+            if (cancelled) return;
+            // 最快方式获取缩略图，不阻塞主线程
+            dispatch_async(dispatch_get_main_queue(), ^{
+                loading.message = @"正在准备图片...";
+            });
+            
+            // 用最快方式获取缩略图，不阻塞主线程
+            PHAsset *asset = info[UIImagePickerControllerPHAsset];
+            if (asset) {
+                PHImageRequestOptions *options = [[PHImageRequestOptions alloc] init];
+                options.deliveryMode = PHImageRequestOptionsDeliveryModeFastFormat;
+                options.synchronous = NO;
+                options.resizeMode = PHImageRequestOptionsResizeModeFast;
+                
+                [[PHImageManager defaultManager] requestImageForAsset:asset
+                                                           targetSize:CGSizeMake(400, 400)
+                                                          contentMode:PHImageContentModeAspectFit
+                                                              options:options
+                                                        resultHandler:^(UIImage *result, NSDictionary *rinfo) {
+                    if (cancelled) return;
+                    UIImage *image = result ?: info[UIImagePickerControllerOriginalImage];
+                    if (image) {
+                        loading.message = @"正在识别...";
+                    }
+                    [self processOCRImage:image loading:loading];
+                }];
+            } else {
+                UIImage *image = info[UIImagePickerControllerOriginalImage];
+                // 立即后台缩小图片，避免卡主线程
+                dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+                    if (cancelled) return;
+                    UIImage *resized = [self quickResize:image maxSize:400];
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        if (cancelled) return;
+                        loading.message = @"正在识别...";
+                        [self processOCRImage:resized loading:loading];
+                    });
+                });
+            }
         }];
-    } else {
-        UIImage *image = info[UIImagePickerControllerOriginalImage];
-        [self processOCRImage:image loading:loading];
-    }
+    }];
+}
+
+/// 快速缩小图片（不依赖 UIGraphics，直接在后台处理）
+- (UIImage *)quickResize:(UIImage *)image maxSize:(CGFloat)max {
+    if (!image) return nil;
+    CGFloat w = image.size.width, h = image.size.height;
+    if (w <= max && h <= max) return image;
+    CGFloat ratio = (w > h) ? (max / w) : (max / h);
+    CGSize newSize = CGSizeMake(w * ratio, h * ratio);
+    UIGraphicsBeginImageContextWithOptions(newSize, YES, 1.0);
+    [image drawInRect:CGRectMake(0, 0, newSize.width, newSize.height)];
+    UIImage *resized = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return resized;
 }
 
 - (void)processOCRImage:(UIImage *)image loading:(UIAlertController *)loading {

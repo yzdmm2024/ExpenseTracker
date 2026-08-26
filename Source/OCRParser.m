@@ -33,10 +33,28 @@
     return resized;
 }
 
+/// 确保图片不小于最小尺寸（Vision 框架需要足够大的图片才能创建 CVPixelBuffer）
+- (UIImage *)ensureMinimumSize:(UIImage *)image minDimension:(CGFloat)minDim {
+    CGFloat w = image.size.width;
+    CGFloat h = image.size.height;
+    if (w >= minDim && h >= minDim) return image;
+    
+    CGFloat ratio = (w < h) ? (minDim / w) : (minDim / h);
+    CGSize newSize = CGSizeMake(w * ratio, h * ratio);
+    
+    UIGraphicsBeginImageContextWithOptions(newSize, YES, 1.0);
+    [image drawInRect:CGRectMake(0, 0, newSize.width, newSize.height)];
+    UIImage *resized = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return resized;
+}
+
 - (void)recognizeFromImage:(UIImage *)image completion:(void(^)(NSArray<TransactionModel *> *transactions, NSError *error))completion {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         // Resize images to speed up OCR (max 600px - payment screenshots have large text)
         UIImage *processedImage = [self resizeImage:image maxDimension:600];
+        // Ensure minimum size for Vision framework (small thumbnails fail CVPixelBuffer creation)
+        processedImage = [self ensureMinimumSize:processedImage minDimension:200];
         
         CGImageRef cgImage = processedImage.CGImage;
         if (!cgImage) {

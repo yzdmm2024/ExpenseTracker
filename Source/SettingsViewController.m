@@ -477,12 +477,12 @@
             PHAsset *asset = info[UIImagePickerControllerPHAsset];
             if (asset) {
                 PHImageRequestOptions *options = [[PHImageRequestOptions alloc] init];
-                options.deliveryMode = PHImageRequestOptionsDeliveryModeFastFormat;
+                options.deliveryMode = PHImageRequestOptionsDeliveryModeHighQualityFormat;
                 options.synchronous = NO;
-                options.resizeMode = PHImageRequestOptionsResizeModeFast;
+                options.resizeMode = PHImageRequestOptionsResizeModeExact;
                 
                 [[PHImageManager defaultManager] requestImageForAsset:asset
-                                                           targetSize:CGSizeMake(400, 400)
+                                                           targetSize:CGSizeMake(600, 600)
                                                           contentMode:PHImageContentModeAspectFit
                                                               options:options
                                                         resultHandler:^(UIImage *result, NSDictionary *rinfo) {

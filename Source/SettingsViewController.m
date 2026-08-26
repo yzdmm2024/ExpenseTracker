@@ -34,8 +34,9 @@
                   @{@"title": @"从相册识别截图", @"subtitle": @"识别支付截图中的交易信息", @"type": @"action", @"action": @"ocr"},
               ]},
         @{@"title": @"识别设置", @"items": @[
-                  @{@"title": @"使用大模型识别", @"subtitle": @"开启后截图走 Gemini 云端识别（免费）", @"type": @"toggle", @"key": @"llm_enabled"},
-                  @{@"title": @"Gemini API Key", @"subtitle": @"点击输入，在 aistudio.google.com 免费申请", @"type": @"action", @"action": @"set_api_key"},
+                  @{@"title": @"使用大模型识别", @"subtitle": @"开启后截图走云端大模型识别，更准确", @"type": @"toggle", @"key": @"llm_enabled"},
+                  @{@"title": @"识别服务商", @"subtitle": @"点击选择服务商", @"type": @"action", @"action": @"select_provider"},
+                  @{@"title": @"API Key", @"subtitle": @"点击输入", @"type": @"action", @"action": @"set_api_key"},
               ]},
         @{@"title": @"数据管理", @"items": @[
                   @{@"title": @"导出为 CSV", @"subtitle": @"保存到文件", @"type": @"action", @"action": @"export"},
@@ -159,8 +160,16 @@
             NSString *masked = [NSString stringWithFormat:@"••••%@", [key substringFromIndex:MAX(0, (NSInteger)key.length - 4)]];
             cell.detailTextLabel.text = [NSString stringWithFormat:@"已设置: %@", masked];
         } else {
-            cell.detailTextLabel.text = item[@"subtitle"];
+            cell.detailTextLabel.text = @"点击输入";
         }
+        cell.detailTextLabel.textColor = [UIColor lightGrayColor];
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        return cell;
+    } else if ([action isEqualToString:@"select_provider"]) {
+        UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
+        cell.textLabel.text = item[@"title"];
+        NSInteger providerIdx = [[NSUserDefaults standardUserDefaults] integerForKey:@"llm_provider"];
+        cell.detailTextLabel.text = [LLMService providerName:(LLMProvider)providerIdx];
         cell.detailTextLabel.textColor = [UIColor lightGrayColor];
         cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         return cell;
@@ -191,6 +200,8 @@
         [self importFromPhoto];
     } else if ([action isEqualToString:@"set_api_key"]) {
         [self showAPIKeyInput];
+    } else if ([action isEqualToString:@"select_provider"]) {
+        [self showProviderPicker];
     } else if ([action isEqualToString:@"export"]) {
         [self exportCSV];
     } else if ([action isEqualToString:@"clear"]) {
@@ -385,11 +396,38 @@
 
 #pragma mark - OCR Screenshot Import
 
+- (void)showProviderPicker {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"选择识别服务商"
+                                message:@"国内大模型，免费使用"
+                                preferredStyle:UIAlertControllerStyleActionSheet];
+    
+    NSInteger current = [[NSUserDefaults standardUserDefaults] integerForKey:@"llm_provider"];
+    
+    for (NSInteger i = 0; i <= LLMProviderGemini; i++) {
+        NSString *name = [LLMService providerName:(LLMProvider)i];
+        NSString *desc = [LLMService providerDescription:(LLMProvider)i];
+        UIAlertAction *action = [UIAlertAction actionWithTitle:name style:UIAlertActionStyleDefault
+                                handler:^(UIAlertAction *action) {
+            [[NSUserDefaults standardUserDefaults] setInteger:i forKey:@"llm_provider"];
+            [[NSUserDefaults standardUserDefaults] synchronize];
+            [self.tableView reloadData];
+        }];
+        [alert addAction:action];
+    }
+    
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
 - (void)showAPIKeyInput {
+    NSInteger providerIdx = [[NSUserDefaults standardUserDefaults] integerForKey:@"llm_provider"];
+    NSString *providerName = [LLMService providerName:(LLMProvider)providerIdx];
+    NSString *providerDesc = [LLMService providerDescription:(LLMProvider)providerIdx];
+    NSString *signupURL = [LLMService providerSignupURL:(LLMProvider)providerIdx];
     NSString *currentKey = [[NSUserDefaults standardUserDefaults] stringForKey:@"llm_api_key"] ?: @"";
     
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Gemini API Key"
-                                message:@"在 aistudio.google.com 免费获取，无需绑卡，每月有免费额度"
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:[NSString stringWithFormat:@"%@ API Key", providerName]
+                                message:[NSString stringWithFormat:@"%@\n\n获取地址: %@", providerDesc, signupURL]
                                 preferredStyle:UIAlertControllerStyleAlert];
     [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
         tf.text = currentKey;
@@ -404,7 +442,6 @@
         [[NSUserDefaults standardUserDefaults] synchronize];
         
         if (key.length > 0) {
-            // Reload the table to show masked key
             [self.tableView reloadData];
         }
     }]];
@@ -460,6 +497,7 @@
     
     BOOL useLLM = [[NSUserDefaults standardUserDefaults] boolForKey:@"llm_enabled"];
     NSString *apiKey = [[NSUserDefaults standardUserDefaults] stringForKey:@"llm_api_key"];
+    NSInteger providerIdx = [[NSUserDefaults standardUserDefaults] integerForKey:@"llm_provider"];
     
     void (^handleResult)(NSArray<TransactionModel *> *, NSError *) = ^(NSArray<TransactionModel *> *transactions, NSError *error) {
         [loading dismissViewControllerAnimated:YES completion:^{
@@ -495,8 +533,8 @@
     };
     
     if (useLLM && apiKey.length > 0) {
-        loading.message = @"正在使用大模型识别...";
-        [[LLMService shared] recognizeFromImage:image apiKey:apiKey completion:handleResult];
+        loading.message = [NSString stringWithFormat:@"正在使用 %@ 识别...", [LLMService providerName:(LLMProvider)providerIdx]];
+        [[LLMService shared] recognizeFromImage:image provider:(LLMProvider)providerIdx apiKey:apiKey completion:handleResult];
     } else {
         if (useLLM && apiKey.length == 0) {
             loading.message = @"未设置API Key，使用本地识别...";

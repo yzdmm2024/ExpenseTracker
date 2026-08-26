@@ -1,8 +1,6 @@
 #import "LLMService.h"
 #import <CommonCrypto/CommonDigest.h>
 
-#define GEMINI_API @"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
-
 @implementation LLMService
 
 + (instancetype)shared {
@@ -13,6 +11,32 @@
     });
     return instance;
 }
+
++ (NSString *)providerName:(LLMProvider)provider {
+    switch (provider) {
+        case LLMProviderZhipu: return @"智谱AI (GLM-4V-Flash)";
+        case LLMProviderQwen:  return @"通义千问 (Qwen-VL-Plus)";
+        case LLMProviderGemini: return @"Google Gemini";
+    }
+}
+
++ (NSString *)providerDescription:(LLMProvider)provider {
+    switch (provider) {
+        case LLMProviderZhipu: return @"GLM-4V-Flash 免费使用，在 open.bigmodel.cn 获取 Key";
+        case LLMProviderQwen:  return @"新用户送 ¥200 额度，在 dashscope.aliyun.com 获取 Key";
+        case LLMProviderGemini: return @"免费额度充足，在 aistudio.google.com 获取 Key";
+    }
+}
+
++ (NSString *)providerSignupURL:(LLMProvider)provider {
+    switch (provider) {
+        case LLMProviderZhipu: return @"https://open.bigmodel.cn/";
+        case LLMProviderQwen:  return @"https://dashscope.aliyun.com/";
+        case LLMProviderGemini: return @"https://aistudio.google.com/apikey";
+    }
+}
+
+#pragma mark - Image Processing
 
 - (UIImage *)resizeImage:(UIImage *)image maxDimension:(CGFloat)maxDim {
     CGFloat w = image.size.width;
@@ -27,28 +51,60 @@
     return resized;
 }
 
+- (NSString *)base64Image:(UIImage *)image {
+    UIImage *resized = [self resizeImage:image maxDimension:800];
+    NSData *jpegData = UIImageJPEGRepresentation(resized, 0.8);
+    if (!jpegData) return nil;
+    return [jpegData base64EncodedStringWithOptions:0];
+}
+
+#pragma mark - Main API
+
 - (void)recognizeFromImage:(UIImage *)image
+                  provider:(LLMProvider)provider
                    apiKey:(NSString *)apiKey
                completion:(void(^)(NSArray<TransactionModel *> *transactions, NSError *error))completion {
     
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        // Compress image to JPEG base64 (max 800px, 80% quality)
-        UIImage *resized = [self resizeImage:image maxDimension:800];
-        NSData *jpegData = UIImageJPEGRepresentation(resized, 0.8);
-        if (!jpegData) {
+        NSString *base64 = [self base64Image:image];
+        if (!base64) {
             dispatch_async(dispatch_get_main_queue(), ^{
                 completion(nil, [NSError errorWithDomain:@"LLMService" code:-1 userInfo:@{NSLocalizedDescriptionKey: @"图片处理失败"}]);
             });
             return;
         }
-        NSString *base64 = [jpegData base64EncodedStringWithOptions:0];
         
-        // Build API URL
-        NSString *urlStr = [NSString stringWithFormat:@"%@?key=%@", GEMINI_API, apiKey];
-        NSURL *url = [NSURL URLWithString:urlStr];
-        if (!url) {
+        // Build request based on provider
+        NSURL *url = nil;
+        NSDictionary *body = nil;
+        
+        switch (provider) {
+            case LLMProviderZhipu:
+                url = [NSURL URLWithString:@"https://open.bigmodel.cn/api/paas/v4/chat/completions"];
+                body = [self buildZhipuBodyWithBase64:base64];
+                break;
+            case LLMProviderQwen:
+                url = [NSURL URLWithString:@"https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"];
+                body = [self buildQwenBodyWithBase64:base64];
+                break;
+            case LLMProviderGemini:
+                url = [NSURL URLWithString:[NSString stringWithFormat:@"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=%@", apiKey]];
+                body = [self buildGeminiBodyWithBase64:base64];
+                break;
+        }
+        
+        if (!url || !body) {
             dispatch_async(dispatch_get_main_queue(), ^{
-                completion(nil, [NSError errorWithDomain:@"LLMService" code:-2 userInfo:@{NSLocalizedDescriptionKey: @"无效的 API Key"}]);
+                completion(nil, [NSError errorWithDomain:@"LLMService" code:-2 userInfo:@{NSLocalizedDescriptionKey: @"无效的配置"}]);
+            });
+            return;
+        }
+        
+        NSError *jsonError = nil;
+        NSData *bodyData = [NSJSONSerialization dataWithJSONObject:body options:0 error:&jsonError];
+        if (jsonError) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                completion(nil, [NSError errorWithDomain:@"LLMService" code:-3 userInfo:@{NSLocalizedDescriptionKey: @"请求构建失败"}]);
             });
             return;
         }
@@ -58,42 +114,9 @@
         [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
         request.timeoutInterval = 30;
         
-        // Build request body
-        NSString *prompt = @"你是一个支付截图识别助手。请仔细查看这张支付截图，提取以下交易信息并返回JSON：\n"
-        "1. amount: 金额（数字，如 123.45）\n"
-        "2. merchant: 商户名称\n"
-        "3. date: 交易日期（格式 YYYY-MM-DD）\n"
-        "4. time: 交易时间（格式 HH:MM）\n"
-        "5. platform: 支付方式（支付宝/微信支付/云闪付/银行卡/Apple Pay/其他）\n"
-        "6. type: 交易类型（expense 支出 / income 收入）\n"
-        "7. category: 消费类别（餐饮/交通/购物/娱乐/医疗/教育/通讯/生活/其他）\n\n"
-        "请严格按照JSON格式返回，不要包含其他文字：\n"
-        "{\"amount\":123.45,\"merchant\":\"商户名\",\"date\":\"2024-01-01\",\"time\":\"12:00\",\"platform\":\"支付宝\",\"type\":\"expense\",\"category\":\"购物\"}\n"
-        "如果无法识别任何信息，返回：{\"error\":\"无法识别\"}";
-        
-        NSDictionary *body = @{
-            @"contents": @[@{
-                @"parts": @[
-                    @{@"text": prompt},
-                    @{@"inline_data": @{
-                            @"mime_type": @"image/jpeg",
-                            @"data": base64
-                    }}
-                ]
-            }],
-            @"generationConfig": @{
-                @"temperature": @0.1,
-                @"maxOutputTokens": @256
-            }
-        };
-        
-        NSError *jsonError = nil;
-        NSData *bodyData = [NSJSONSerialization dataWithJSONObject:body options:0 error:&jsonError];
-        if (jsonError) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                completion(nil, [NSError errorWithDomain:@"LLMService" code:-3 userInfo:@{NSLocalizedDescriptionKey: @"请求构建失败"}]);
-            });
-            return;
+        // Set auth header (Gemini uses URL param, others use Bearer)
+        if (provider != LLMProviderGemini) {
+            [request setValue:[NSString stringWithFormat:@"Bearer %@", apiKey] forHTTPHeaderField:@"Authorization"];
         }
         request.HTTPBody = bodyData;
         
@@ -121,7 +144,7 @@
                     return;
                 }
                 
-                // Parse Gemini response
+                // Parse response
                 NSError *parseError = nil;
                 NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:&parseError];
                 if (parseError) {
@@ -131,22 +154,41 @@
                     return;
                 }
                 
-                NSString *text = json[@"candidates"][0][@"content"][@"parts"][0][@"text"];
-                if (!text) {
-                    // Check for safety blocks
-                    NSString *blockReason = json[@"candidates"][0][@"finishReason"];
-                    if ([blockReason isEqualToString:@"SAFETY"]) {
-                        resultError = [NSError errorWithDomain:@"LLMService" code:-7
-                                                     userInfo:@{NSLocalizedDescriptionKey: @"图片内容被安全机制拦截，请选择其他截图"}];
-                    } else {
-                        resultError = [NSError errorWithDomain:@"LLMService" code:-8
-                                                     userInfo:@{NSLocalizedDescriptionKey: @"API返回异常，请重试"}];
+                // Extract text from provider-specific response
+                NSString *text = nil;
+                switch (provider) {
+                    case LLMProviderZhipu:
+                    case LLMProviderQwen: {
+                        // OpenAI-compatible response
+                        NSString *content = json[@"choices"][0][@"message"][@"content"];
+                        if (content) text = content;
+                        break;
                     }
+                    case LLMProviderGemini: {
+                        // Gemini response
+                        text = json[@"candidates"][0][@"content"][@"parts"][0][@"text"];
+                        if (!text) {
+                            NSString *blockReason = json[@"candidates"][0][@"finishReason"];
+                            if ([blockReason isEqualToString:@"SAFETY"]) {
+                                resultError = [NSError errorWithDomain:@"LLMService" code:-7
+                                                             userInfo:@{NSLocalizedDescriptionKey: @"图片内容被安全机制拦截，请选择其他截图"}];
+                            }
+                        }
+                        break;
+                    }
+                }
+                
+                if (!text && !resultError) {
+                    resultError = [NSError errorWithDomain:@"LLMService" code:-8
+                                                 userInfo:@{NSLocalizedDescriptionKey: @"API返回异常，请重试"}];
+                }
+                
+                if (resultError) {
                     dispatch_semaphore_signal(semaphore);
                     return;
                 }
                 
-                // Extract JSON from response (handle markdown code blocks)
+                // Extract JSON from response text
                 NSString *jsonStr = [self extractJSONFromText:text];
                 if (!jsonStr) {
                     resultError = [NSError errorWithDomain:@"LLMService" code:-9
@@ -206,7 +248,74 @@
     });
 }
 
-/// Extract JSON from text (handle markdown code blocks and cleanup)
+#pragma mark - Provider-Specific Request Builders
+
+- (NSString *)promptText {
+    return @"你是一个支付截图识别助手。请仔细查看这张支付截图，提取以下交易信息并返回JSON：\n"
+    "1. amount: 金额（数字，如 123.45）\n"
+    "2. merchant: 商户名称\n"
+    "3. date: 交易日期（格式 YYYY-MM-DD）\n"
+    "4. time: 交易时间（格式 HH:MM）\n"
+    "5. platform: 支付方式（支付宝/微信支付/云闪付/银行卡/Apple Pay/其他）\n"
+    "6. type: 交易类型（expense 支出 / income 收入）\n"
+    "7. category: 消费类别（餐饮/交通/购物/娱乐/医疗/教育/通讯/生活/其他）\n\n"
+    "请严格按照JSON格式返回，不要包含其他文字：\n"
+    "{\"amount\":123.45,\"merchant\":\"商户名\",\"date\":\"2024-01-01\",\"time\":\"12:00\",\"platform\":\"支付宝\",\"type\":\"expense\",\"category\":\"购物\"}\n"
+    "如果无法识别任何信息，返回：{\"error\":\"无法识别\"}";
+}
+
+- (NSDictionary *)buildZhipuBodyWithBase64:(NSString *)base64 {
+    NSString *dataUrl = [NSString stringWithFormat:@"data:image/jpeg;base64,%@", base64];
+    return @{
+        @"model": @"glm-4v-flash",
+        @"messages": @[@{
+            @"role": @"user",
+            @"content": @[
+                @{@"type": @"text", @"text": [self promptText]},
+                @{@"type": @"image_url", @"image_url": @{@"url": dataUrl}}
+            ]
+        }],
+        @"temperature": @0.1,
+        @"max_tokens": @256
+    };
+}
+
+- (NSDictionary *)buildQwenBodyWithBase64:(NSString *)base64 {
+    NSString *dataUrl = [NSString stringWithFormat:@"data:image/jpeg;base64,%@", base64];
+    return @{
+        @"model": @"qwen-vl-plus",
+        @"messages": @[@{
+            @"role": @"user",
+            @"content": @[
+                @{@"type": @"image_url", @"image_url": @{@"url": dataUrl}},
+                @{@"type": @"text", @"text": [self promptText]}
+            ]
+        }],
+        @"temperature": @0.1,
+        @"max_tokens": @256
+    };
+}
+
+- (NSDictionary *)buildGeminiBodyWithBase64:(NSString *)base64 {
+    return @{
+        @"contents": @[@{
+            @"parts": @[
+                @{@"text": [self promptText]},
+                @{@"inline_data": @{
+                        @"mime_type": @"image/jpeg",
+                        @"data": base64
+                }}
+            ]
+        }],
+        @"generationConfig": @{
+            @"temperature": @0.1,
+            @"maxOutputTokens": @256
+        }
+    };
+}
+
+#pragma mark - Response Parsing
+
 - (NSString *)extractJSONFromText:(NSString *)text {
     // Try to find JSON in markdown code block
     NSRegularExpression *regex = [NSRegularExpression regularExpressionWithPattern:@"```(?:json)?\\s*([\\s\\S]*?)```" options:0 error:nil];
@@ -231,7 +340,6 @@
     return nil;
 }
 
-/// Parse JSON into TransactionModel
 - (TransactionModel *)transactionFromJSON:(NSDictionary *)json {
     double amount = [json[@"amount"] doubleValue];
     if (amount <= 0) return nil;

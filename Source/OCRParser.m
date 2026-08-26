@@ -35,8 +35,8 @@
 
 - (void)recognizeFromImage:(UIImage *)image completion:(void(^)(NSArray<TransactionModel *> *transactions, NSError *error))completion {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        // Resize large images to speed up OCR (max 1200px on longest side)
-        UIImage *processedImage = [self resizeImage:image maxDimension:1200];
+        // Resize images to speed up OCR (max 600px - payment screenshots have large text)
+        UIImage *processedImage = [self resizeImage:image maxDimension:600];
         
         CGImageRef cgImage = processedImage.CGImage;
         if (!cgImage) {
@@ -83,8 +83,8 @@
         }];
         
         request.recognitionLevel = VNRequestTextRecognitionLevelFast;
-        request.recognitionLanguages = @[@"zh-Hans", @"en-US"];
-        request.usesLanguageCorrection = YES;
+        request.recognitionLanguages = @[@"zh-Hans"];
+        request.usesLanguageCorrection = NO;
         
         VNImageRequestHandler *handler = [[VNImageRequestHandler alloc] initWithCGImage:cgImage options:@{}];
         NSError *handlerError = nil;

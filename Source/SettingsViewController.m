@@ -6,6 +6,7 @@
 #import "OCRParser.h"
 #import "GlassmorphismView.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import <Photos/Photos.h>
 
 @interface SettingsViewController () <UITableViewDelegate, UITableViewDataSource, UIDocumentPickerDelegate, UIImagePickerControllerDelegate, UINavigationControllerDelegate>
 @property (nonatomic, strong) UITableView *tableView;
@@ -368,11 +369,42 @@
 - (void)imagePickerController:(UIImagePickerController *)picker didFinishPickingMediaWithInfo:(NSDictionary<UIImagePickerControllerInfoKey, id> *)info {
     [picker dismissViewControllerAnimated:YES completion:nil];
     
-    UIImage *image = info[UIImagePickerControllerOriginalImage];
-    if (!image) return;
-    
     UIAlertController *loading = [UIAlertController alertControllerWithTitle:@"识别中" message:@"正在分析截图..." preferredStyle:UIAlertControllerStyleAlert];
     [self presentViewController:loading animated:YES completion:nil];
+    
+    // Request a smaller image directly from photo library to avoid full-resolution decode
+    PHAsset *asset = info[UIImagePickerControllerPHAsset];
+    if (asset) {
+        PHImageRequestOptions *options = [[PHImageRequestOptions alloc] init];
+        options.deliveryMode = PHImageRequestOptionsDeliveryModeHighQualityFormat;
+        options.synchronous = YES;
+        options.resizeMode = PHImageRequestOptionsResizeModeExact;
+        
+        [[PHImageManager defaultManager] requestImageForAsset:asset
+                                                   targetSize:CGSizeMake(600, 600)
+                                                  contentMode:PHImageContentModeAspectFit
+                                                      options:options
+                                                resultHandler:^(UIImage *result, NSDictionary *rinfo) {
+            UIImage *image = result ?: info[UIImagePickerControllerOriginalImage];
+            [self processOCRImage:image loading:loading];
+        }];
+    } else {
+        UIImage *image = info[UIImagePickerControllerOriginalImage];
+        [self processOCRImage:image loading:loading];
+    }
+}
+
+- (void)processOCRImage:(UIImage *)image loading:(UIAlertController *)loading {
+    if (!image) {
+        [loading dismissViewControllerAnimated:YES completion:^{
+            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"识别失败"
+                                       message:@"无法获取图片"
+                                       preferredStyle:UIAlertControllerStyleAlert];
+            [alert addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
+            [self presentViewController:alert animated:YES completion:nil];
+        }];
+        return;
+    }
     
     [[OCRParser shared] recognizeFromImage:image completion:^(NSArray<TransactionModel *> *transactions, NSError *error) {
         [loading dismissViewControllerAnimated:YES completion:^{

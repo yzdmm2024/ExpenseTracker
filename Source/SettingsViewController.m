@@ -4,6 +4,7 @@
 #import "NotificationParser.h"
 #import "CSVImporter.h"
 #import "OCRParser.h"
+#import "LLMService.h"
 #import "GlassmorphismView.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <Photos/Photos.h>
@@ -31,6 +32,10 @@
                   @{@"title": @"导入支付宝账单", @"subtitle": @"从支付宝导出的 CSV 文件", @"type": @"action", @"action": @"import_alipay"},
                   @{@"title": @"导入微信账单", @"subtitle": @"从微信导出的 CSV 文件", @"type": @"action", @"action": @"import_wechat"},
                   @{@"title": @"从相册识别截图", @"subtitle": @"识别支付截图中的交易信息", @"type": @"action", @"action": @"ocr"},
+              ]},
+        @{@"title": @"识别设置", @"items": @[
+                  @{@"title": @"使用大模型识别", @"subtitle": @"开启后截图走 Gemini 云端识别（免费）", @"type": @"toggle", @"key": @"llm_enabled"},
+                  @{@"title": @"Gemini API Key", @"subtitle": @"点击输入，在 aistudio.google.com 免费申请", @"type": @"action", @"action": @"set_api_key"},
               ]},
         @{@"title": @"数据管理", @"items": @[
                   @{@"title": @"导出为 CSV", @"subtitle": @"保存到文件", @"type": @"action", @"action": @"export"},
@@ -119,6 +124,7 @@
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     NSDictionary *item = self.sections[indexPath.section][@"items"][indexPath.row];
     NSString *type = item[@"type"];
+    NSString *action = item[@"action"];
     
     if ([type isEqualToString:@"toggle"]) {
         UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
@@ -127,7 +133,12 @@
         cell.detailTextLabel.textColor = [UIColor lightGrayColor];
         
         UISwitch *sw = [[UISwitch alloc] init];
-        sw.on = YES;
+        NSString *key = item[@"key"];
+        sw.on = [[NSUserDefaults standardUserDefaults] boolForKey:key];
+        // Default to ON for llm_enabled if not set
+        if (![[NSUserDefaults standardUserDefaults] objectForKey:key]) {
+            sw.on = NO;
+        }
         [sw addTarget:self action:@selector(toggleChanged:) forControlEvents:UIControlEventValueChanged];
         cell.accessoryView = sw;
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
@@ -138,6 +149,19 @@
         cell.detailTextLabel.text = item[@"subtitle"];
         cell.detailTextLabel.textColor = [UIColor lightGrayColor];
         cell.textLabel.textColor = [UIColor systemRedColor];
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        return cell;
+    } else if ([action isEqualToString:@"set_api_key"]) {
+        UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
+        cell.textLabel.text = item[@"title"];
+        NSString *key = [[NSUserDefaults standardUserDefaults] stringForKey:@"llm_api_key"];
+        if (key.length > 0) {
+            NSString *masked = [NSString stringWithFormat:@"••••%@", [key substringFromIndex:MAX(0, (NSInteger)key.length - 4)]];
+            cell.detailTextLabel.text = [NSString stringWithFormat:@"已设置: %@", masked];
+        } else {
+            cell.detailTextLabel.text = item[@"subtitle"];
+        }
+        cell.detailTextLabel.textColor = [UIColor lightGrayColor];
         cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         return cell;
     } else {
@@ -165,6 +189,8 @@
         [self importWeChatCSV];
     } else if ([action isEqualToString:@"ocr"]) {
         [self importFromPhoto];
+    } else if ([action isEqualToString:@"set_api_key"]) {
+        [self showAPIKeyInput];
     } else if ([action isEqualToString:@"export"]) {
         [self exportCSV];
     } else if ([action isEqualToString:@"clear"]) {
@@ -359,6 +385,32 @@
 
 #pragma mark - OCR Screenshot Import
 
+- (void)showAPIKeyInput {
+    NSString *currentKey = [[NSUserDefaults standardUserDefaults] stringForKey:@"llm_api_key"] ?: @"";
+    
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Gemini API Key"
+                                message:@"在 aistudio.google.com 免费获取，无需绑卡，每月有免费额度"
+                                preferredStyle:UIAlertControllerStyleAlert];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
+        tf.text = currentKey;
+        tf.placeholder = @"输入你的 API Key";
+        tf.clearButtonMode = UITextFieldViewModeWhileEditing;
+    }];
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"保存" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        NSString *key = alert.textFields.firstObject.text ?: @"";
+        key = [key stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        [[NSUserDefaults standardUserDefaults] setObject:key forKey:@"llm_api_key"];
+        [[NSUserDefaults standardUserDefaults] synchronize];
+        
+        if (key.length > 0) {
+            // Reload the table to show masked key
+            [self.tableView reloadData];
+        }
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
 - (void)importFromPhoto {
     UIImagePickerController *picker = [[UIImagePickerController alloc] init];
     picker.sourceType = UIImagePickerControllerSourceTypePhotoLibrary;
@@ -406,11 +458,23 @@
         return;
     }
     
-    [[OCRParser shared] recognizeFromImage:image completion:^(NSArray<TransactionModel *> *transactions, NSError *error) {
+    BOOL useLLM = [[NSUserDefaults standardUserDefaults] boolForKey:@"llm_enabled"];
+    NSString *apiKey = [[NSUserDefaults standardUserDefaults] stringForKey:@"llm_api_key"];
+    
+    void (^handleResult)(NSArray<TransactionModel *> *, NSError *) = ^(NSArray<TransactionModel *> *transactions, NSError *error) {
         [loading dismissViewControllerAnimated:YES completion:^{
-            if (error || transactions.count == 0) {
+            if (error) {
                 UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"识别失败"
-                                           message:error ? error.localizedDescription : @"未识别到交易信息，请确保截图包含金额和支付信息"
+                                           message:error.localizedDescription
+                                           preferredStyle:UIAlertControllerStyleAlert];
+                [alert addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
+                [self presentViewController:alert animated:YES completion:nil];
+                return;
+            }
+            
+            if (transactions.count == 0) {
+                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"识别失败"
+                                           message:@"未识别到交易信息，请确保截图包含金额和支付信息"
                                            preferredStyle:UIAlertControllerStyleAlert];
                 [alert addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
                 [self presentViewController:alert animated:YES completion:nil];
@@ -428,7 +492,17 @@
             [done addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
             [self presentViewController:done animated:YES completion:nil];
         }];
-    }];
+    };
+    
+    if (useLLM && apiKey.length > 0) {
+        loading.message = @"正在使用大模型识别...";
+        [[LLMService shared] recognizeFromImage:image apiKey:apiKey completion:handleResult];
+    } else {
+        if (useLLM && apiKey.length == 0) {
+            loading.message = @"未设置API Key，使用本地识别...";
+        }
+        [[OCRParser shared] recognizeFromImage:image completion:handleResult];
+    }
 }
 
 - (void)imagePickerControllerDidCancel:(UIImagePickerController *)picker {

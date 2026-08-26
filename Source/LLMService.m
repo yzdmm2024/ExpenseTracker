@@ -198,29 +198,42 @@
                 }
                 
                 NSData *jsonData = [jsonStr dataUsingEncoding:NSUTF8StringEncoding];
-                NSDictionary *txnJson = [NSJSONSerialization JSONObjectWithData:jsonData options:0 error:nil];
-                if (!txnJson) {
+                id jsonObj = [NSJSONSerialization JSONObjectWithData:jsonData options:0 error:nil];
+                if (!jsonObj) {
                     resultError = [NSError errorWithDomain:@"LLMService" code:-10
                                                  userInfo:@{NSLocalizedDescriptionKey: @"解析交易信息失败"}];
                     dispatch_semaphore_signal(semaphore);
                     return;
                 }
                 
-                // Check for error in response
-                if (txnJson[@"error"]) {
-                    resultError = [NSError errorWithDomain:@"LLMService" code:-11
-                                                 userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"未识别到交易信息: %@", txnJson[@"error"]]}];
-                    dispatch_semaphore_signal(semaphore);
-                    return;
+                // Parse transactions - handle both single object and array
+                NSMutableArray *parsedTxns = [NSMutableArray array];
+                
+                if ([jsonObj isKindOfClass:[NSArray class]]) {
+                    // Array of transactions
+                    for (NSDictionary *item in (NSArray *)jsonObj) {
+                        if (item[@"error"]) continue;
+                        TransactionModel *t = [self transactionFromJSON:item];
+                        if (t) [parsedTxns addObject:t];
+                    }
+                } else if ([jsonObj isKindOfClass:[NSDictionary class]]) {
+                    NSDictionary *txnJson = (NSDictionary *)jsonObj;
+                    // Check for error in response
+                    if (txnJson[@"error"]) {
+                        resultError = [NSError errorWithDomain:@"LLMService" code:-11
+                                                     userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"未识别到交易信息: %@", txnJson[@"error"]]}];
+                        dispatch_semaphore_signal(semaphore);
+                        return;
+                    }
+                    TransactionModel *t = [self transactionFromJSON:txnJson];
+                    if (t) [parsedTxns addObject:t];
                 }
                 
-                // Build TransactionModel
-                TransactionModel *t = [self transactionFromJSON:txnJson];
-                if (t) {
-                    result = @[t];
+                if (parsedTxns.count > 0) {
+                    result = [parsedTxns copy];
                 } else {
                     resultError = [NSError errorWithDomain:@"LLMService" code:-12
-                                                 userInfo:@{NSLocalizedDescriptionKey: @"提取的交易信息不完整"}];
+                                                 userInfo:@{NSLocalizedDescriptionKey: @"未识别到有效的交易信息，请确保截图包含清晰的金额和商户信息"}];
                 }
                 dispatch_semaphore_signal(semaphore);
             }];
@@ -251,17 +264,20 @@
 #pragma mark - Provider-Specific Request Builders
 
 - (NSString *)promptText {
-    return @"你是一个支付截图识别助手。请仔细查看这张支付截图，提取以下交易信息并返回JSON：\n"
-    "1. amount: 金额（数字，如 123.45）\n"
-    "2. merchant: 商户名称\n"
-    "3. date: 交易日期（格式 YYYY-MM-DD）\n"
-    "4. time: 交易时间（格式 HH:MM）\n"
-    "5. platform: 支付方式（支付宝/微信支付/云闪付/银行卡/Apple Pay/其他）\n"
-    "6. type: 交易类型（expense 支出 / income 收入）\n"
-    "7. category: 消费类别（餐饮/交通/购物/娱乐/医疗/教育/通讯/生活/其他）\n\n"
-    "请严格按照JSON格式返回，不要包含其他文字：\n"
-    "{\"amount\":123.45,\"merchant\":\"商户名\",\"date\":\"2024-01-01\",\"time\":\"12:00\",\"platform\":\"支付宝\",\"type\":\"expense\",\"category\":\"购物\"}\n"
-    "如果无法识别任何信息，返回：{\"error\":\"无法识别\"}";
+    return @"你是一个支付截图识别助手。识别截图中的交易记录：\n\n"
+    "1. 如果是单笔支付截图 → 返回单个JSON对象\n"
+    "2. 如果是交易列表/账单页面 → 返回JSON数组，包含所有可见的交易\n\n"
+    "每笔交易包含以下字段：\n"
+    "amount: 金额（数字，如 123.45，**不要加负号**）\n"
+    "merchant: 商户名称或对方\n"
+    "date: 交易日期（格式 YYYY-MM-DD）\n"
+    "time: 交易时间（格式 HH:MM）\n"
+    "platform: 支付方式（支付宝/微信支付/云闪付/银行卡/Apple Pay/其他）\n"
+    "type: 交易类型（expense 支出 / income 收入）\n"
+    "category: 消费类别（餐饮/交通/购物/娱乐/医疗/教育/通讯/生活/其他）\n\n"
+    "单条示例：{\"amount\":25.00,\"merchant\":\"华\",\"date\":\"2026-08-25\",\"time\":\"23:54\",\"platform\":\"支付宝\",\"type\":\"expense\",\"category\":\"购物\"}\n"
+    "多条示例：[{\"amount\":25.00,\"merchant\":\"华\",\"date\":\"2026-08-25\",\"time\":\"23:54\",\"platform\":\"支付宝\",\"type\":\"expense\",\"category\":\"购物\"},{\"amount\":15.50,\"merchant\":\"便利店\",\"date\":\"2026-08-25\",\"time\":\"20:30\",\"platform\":\"微信支付\",\"type\":\"expense\",\"category\":\"购物\"}]\n"
+    "严格返回JSON，不要包含其他文字。无法识别时返回：{\"error\":\"无法识别\"}";
 }
 
 - (NSDictionary *)buildZhipuBodyWithBase64:(NSString *)base64 {
@@ -323,8 +339,27 @@
     if (match) {
         return [text substringWithRange:[match rangeAtIndex:1]];
     }
-    // Try to find {...} directly
+    // Try to find [...] or {...} directly - prefer array first
+    NSRange arrayRange = [text rangeOfString:@"["];
     NSRange braceRange = [text rangeOfString:@"{"];
+    if (arrayRange.location != NSNotFound && (arrayRange.location < braceRange.location || braceRange.location == NSNotFound)) {
+        NSInteger depth = 0;
+        BOOL inString = NO;
+        unichar prev = 0;
+        for (NSInteger i = arrayRange.location; i < text.length; i++) {
+            unichar c = [text characterAtIndex:i];
+            if (c == '"' && prev != '\\') inString = !inString;
+            if (!inString) {
+                if (c == '[') depth++;
+                else if (c == ']') depth--;
+            }
+            prev = c;
+            if (depth == 0) {
+                return [text substringWithRange:NSMakeRange(arrayRange.location, i - arrayRange.location + 1)];
+            }
+        }
+    }
+    // Fallback to finding {...}
     if (braceRange.location != NSNotFound) {
         NSInteger depth = 0;
         NSInteger start = braceRange.location;

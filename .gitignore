@@ -1,5 +1,5 @@
 build/
-*.o
 *.ipa
-*.deb
-.DS_Store
+*.o
+ldid.exe
+old_extract/

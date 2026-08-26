@@ -36,14 +36,14 @@
         @{@"title": @"识别设置", @"items": @[
                   @{@"title": @"使用大模型识别", @"subtitle": @"开启后截图走云端大模型识别，更准确", @"type": @"toggle", @"key": @"llm_enabled"},
                   @{@"title": @"识别服务商", @"subtitle": @"点击选择服务商", @"type": @"action", @"action": @"select_provider"},
-                  @{@"title": @"API Key", @"subtitle": @"点击输入", @"type": @"action", @"action": @"set_api_key"},
+                  @{@"title": @"API Key", @"subtitle": @"显示当前服务商", @"type": @"action", @"action": @"set_api_key"},
               ]},
         @{@"title": @"数据管理", @"items": @[
                   @{@"title": @"导出为 CSV", @"subtitle": @"保存到文件", @"type": @"action", @"action": @"export"},
                   @{@"title": @"清除所有数据", @"subtitle": @"删除全部交易记录", @"type": @"danger", @"action": @"clear"},
               ]},
         @{@"title": @"关于", @"items": @[
-                  @{@"title": @"版本", @"subtitle": @"1.1.0", @"type": @"info"},
+                  @{@"title": @"版本", @"subtitle": @"1.1.1", @"type": @"info"},
                   @{@"title": @"数据源存储路径", @"subtitle": [NSString stringWithFormat:@"%@/Documents/expense_tracker.db", NSHomeDirectory()], @"type": @"info"},
               ]},
     ];
@@ -154,7 +154,9 @@
         return cell;
     } else if ([action isEqualToString:@"set_api_key"]) {
         UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
-        cell.textLabel.text = item[@"title"];
+        NSInteger providerIdx = [[NSUserDefaults standardUserDefaults] integerForKey:@"llm_provider"];
+        NSString *providerName = [LLMService providerName:(LLMProvider)providerIdx];
+        cell.textLabel.text = [NSString stringWithFormat:@"%@ API Key", providerName];
         NSString *key = [[NSUserDefaults standardUserDefaults] stringForKey:@"llm_api_key"];
         if (key.length > 0) {
             NSString *masked = [NSString stringWithFormat:@"••••%@", [key substringFromIndex:MAX(0, (NSInteger)key.length - 4)]];
@@ -406,7 +408,9 @@
     for (NSInteger i = 0; i <= LLMProviderGemini; i++) {
         NSString *name = [LLMService providerName:(LLMProvider)i];
         NSString *desc = [LLMService providerDescription:(LLMProvider)i];
-        UIAlertAction *action = [UIAlertAction actionWithTitle:name style:UIAlertActionStyleDefault
+        BOOL isCurrent = (i == current);
+        NSString *title = isCurrent ? [NSString stringWithFormat:@"✅ %@", name] : name;
+        UIAlertAction *action = [UIAlertAction actionWithTitle:title style:UIAlertActionStyleDefault
                                 handler:^(UIAlertAction *action) {
             [[NSUserDefaults standardUserDefaults] setInteger:i forKey:@"llm_provider"];
             [[NSUserDefaults standardUserDefaults] synchronize];

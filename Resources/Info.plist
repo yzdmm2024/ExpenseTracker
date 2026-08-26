@@ -33,6 +33,10 @@
 		<string>UIInterfaceOrientationPortrait</string>
 	</array>
 	<key>UIUserInterfaceStyle</key>
-	<string>Light</string>
-</dict>
+		<string>Light</string>
+		<key>NSPhotoLibraryUsageDescription</key>
+		<string>用于识别支付截图中的交易信息</string>
+		<key>UIApplicationSupportsIndirectInputEvents</key>
+		<true/>
+	</dict>
 </plist>

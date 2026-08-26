@@ -13,9 +13,32 @@
     return instance;
 }
 
+- (UIImage *)resizeImage:(UIImage *)image maxDimension:(CGFloat)maxDim {
+    CGFloat w = image.size.width;
+    CGFloat h = image.size.height;
+    if (w <= maxDim && h <= maxDim) return image;
+    
+    CGFloat ratio;
+    if (w > h) {
+        ratio = maxDim / w;
+    } else {
+        ratio = maxDim / h;
+    }
+    CGSize newSize = CGSizeMake(w * ratio, h * ratio);
+    
+    UIGraphicsBeginImageContextWithOptions(newSize, YES, 1.0);
+    [image drawInRect:CGRectMake(0, 0, newSize.width, newSize.height)];
+    UIImage *resized = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return resized;
+}
+
 - (void)recognizeFromImage:(UIImage *)image completion:(void(^)(NSArray<TransactionModel *> *transactions, NSError *error))completion {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        CGImageRef cgImage = image.CGImage;
+        // Resize large images to speed up OCR (max 1200px on longest side)
+        UIImage *processedImage = [self resizeImage:image maxDimension:1200];
+        
+        CGImageRef cgImage = processedImage.CGImage;
         if (!cgImage) {
             dispatch_async(dispatch_get_main_queue(), ^{
                 completion(nil, [NSError errorWithDomain:@"OCRParser" code:-1 userInfo:@{NSLocalizedDescriptionKey: @"无效图片"}]);
@@ -23,15 +46,20 @@
             return;
         }
         
+        __block BOOL timedOut = NO;
+        dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
+        
         VNRecognizeTextRequest *request = [[VNRecognizeTextRequest alloc] initWithCompletionHandler:^(VNRequest *req, NSError *err) {
+            if (timedOut) return;
+            
             if (err) {
                 dispatch_async(dispatch_get_main_queue(), ^{
                     completion(nil, err);
                 });
+                dispatch_semaphore_signal(semaphore);
                 return;
             }
             
-            // Extract all recognized text
             NSMutableArray *allText = [NSMutableArray array];
             NSMutableDictionary *textByY = [NSMutableDictionary dictionary];
             
@@ -39,7 +67,6 @@
                 VNRecognizedText *top = [obs topCandidates:1].firstObject;
                 if (top) {
                     [allText addObject:top.string];
-                    // Group by Y position (line)
                     NSString *yKey = [NSString stringWithFormat:@"%.0f", obs.boundingBox.origin.y * 1000];
                     NSMutableArray *line = textByY[yKey] ?: [NSMutableArray array];
                     [line addObject:top.string];
@@ -47,15 +74,15 @@
                 }
             }
             
-            // Try to parse transactions from the recognized text
             NSArray *transactions = [self parseTransactionsFromText:allText groupedByY:textByY];
             
             dispatch_async(dispatch_get_main_queue(), ^{
                 completion(transactions, nil);
             });
+            dispatch_semaphore_signal(semaphore);
         }];
         
-        request.recognitionLevel = VNRequestTextRecognitionLevelAccurate;
+        request.recognitionLevel = VNRequestTextRecognitionLevelFast;
         request.recognitionLanguages = @[@"zh-Hans", @"en-US"];
         request.usesLanguageCorrection = YES;
         
@@ -66,6 +93,17 @@
         if (handlerError) {
             dispatch_async(dispatch_get_main_queue(), ^{
                 completion(nil, handlerError);
+            });
+            return;
+        }
+        
+        // Wait for completion with 20-second timeout
+        dispatch_time_t timeout = dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_SEC);
+        if (dispatch_semaphore_wait(semaphore, timeout) != 0) {
+            timedOut = YES;
+            [request cancel];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                completion(nil, [NSError errorWithDomain:@"OCRParser" code:-2 userInfo:@{NSLocalizedDescriptionKey: @"识别超时，请选择清晰度更高的截图"}]);
             });
         }
     });
